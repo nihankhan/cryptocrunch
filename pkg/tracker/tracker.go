@@ -1,65 +1,61 @@
 package tracker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
 type PriceData struct {
-	Currency string
-	Price    float64
+	Currency string  `json:"currency"`
+	Price    float64 `json:"price"`
 }
 
-type priceResponse struct {
-	USD float64 `json:"usd"`
-}
-
-func TrackPrices(priceCh chan<- PriceData) {
+func TrackPrices(ctx context.Context, priceCh chan<- PriceData) {
 	currencies := []string{"bitcoin", "ethereum", "ripple", "litecoin", "bitcoin-cash"}
+	ids := strings.Join(currencies, ",")
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd", ids)
 
 	client := http.Client{
-		Timeout: 7 * time.Second,
+		Timeout: 5 * time.Second,
 	}
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var result map[string]PriceData
 
 	for {
-		for _, currency := range currencies {
-			url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd", currency)
-
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 			resp, err := client.Get(url)
-
 			if err != nil {
-				fmt.Printf("Error fetching price for %s: %v", currency, err)
+				fmt.Printf("Error fetching price for %s: %v", ids, err)
 				continue
 			}
-
-			var result map[string]priceResponse
 
 			err = json.NewDecoder(resp.Body).Decode(&result)
-
 			if err != nil {
-				fmt.Printf("Error decoding price data for %s: %v", currency, err)
+				fmt.Printf("Error decoding price data for %s: %v", ids, err)
 				continue
 			}
-
-			price := result[currency].USD
-
-			/*price, err := strconv.ParseFloat(pricStr, 64)
-
-			if err != nil {
-				log.Printf("Error prasing price for %s: %v\n", currency, err)
-				continue
-			} */
-
 			resp.Body.Close()
 
-			priceCh <- PriceData{
-				Currency: currency,
-				Price:    price,
+			for _, currency := range currencies {
+				data, ok := result[currency]
+				if !ok {
+					continue
+				}
+
+				priceCh <- PriceData{
+					Currency: currency,
+					Price:    data.Price,
+				}
 			}
 		}
-
-		time.Sleep(1 * time.Second)
 	}
 }
