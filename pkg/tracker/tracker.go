@@ -39,11 +39,11 @@ func TrackPrices(ctx context.Context, priceCh chan<- PriceData) {
 			}
 
 			err = json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
 			if err != nil {
 				fmt.Printf("Error decoding price data for %s: %v", ids, err)
 				continue
 			}
-			resp.Body.Close()
 
 			for _, currency := range currencies {
 				data, ok := result[currency]
@@ -51,9 +51,13 @@ func TrackPrices(ctx context.Context, priceCh chan<- PriceData) {
 					continue
 				}
 
-				priceCh <- PriceData{
+				select {
+				case <-ctx.Done():
+					return
+				case priceCh <- PriceData{
 					Currency: currency,
 					Price:    data.Price,
+				}:
 				}
 			}
 		}
