@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,17 +16,27 @@ type PriceData struct {
 }
 
 func TrackPrices(ctx context.Context, priceCh chan<- PriceData) {
-	currencies := []string{"bitcoin", "ethereum", "ripple", "litecoin", "bitcoin-cash"}
+	currencies := []string{
+		"bitcoin",
+		"ethereum",
+		"ripple",
+		"litecoin",
+		"bitcoin-cash",
+	}
 	ids := strings.Join(currencies, ",")
-	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd", ids)
+	url := fmt.Sprintf(
+		"https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd",
+		ids,
+	)
 
 	client := http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 10 * time.Second,
 	}
-	ticker := time.NewTicker(1 * time.Second)
+
+	ticker := time.NewTicker(7 * time.Second)
 	defer ticker.Stop()
 
-	var result map[string]PriceData
+	var result map[string]map[string]interface{}
 
 	for {
 		select {
@@ -34,14 +45,14 @@ func TrackPrices(ctx context.Context, priceCh chan<- PriceData) {
 		case <-ticker.C:
 			resp, err := client.Get(url)
 			if err != nil {
-				fmt.Printf("Error fetching price for %s: %v", ids, err)
+				fmt.Println("fetch error:", err)
 				continue
 			}
 
 			err = json.NewDecoder(resp.Body).Decode(&result)
 			resp.Body.Close()
 			if err != nil {
-				fmt.Printf("Error decoding price data for %s: %v", ids, err)
+				fmt.Println("decode error:", err)
 				continue
 			}
 
@@ -50,13 +61,27 @@ func TrackPrices(ctx context.Context, priceCh chan<- PriceData) {
 				if !ok {
 					continue
 				}
+				rawPrice, ok := data["usd"]
+				if !ok {
+					continue
+				}
+
+				var price float64
+				switch v := rawPrice.(type) {
+				case float64:
+					price = v
+				case string:
+					price, _ = strconv.ParseFloat(v, 64)
+				default:
+					continue
+				}
 
 				select {
 				case <-ctx.Done():
 					return
 				case priceCh <- PriceData{
 					Currency: currency,
-					Price:    data.Price,
+					Price:    price,
 				}:
 				}
 			}
