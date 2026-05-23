@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/nihankhan/CryptoCrunch/pkg/processor"
@@ -29,11 +30,13 @@ func (s *SSE) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			for c := range clients {
+				fmt.Println("clients:", len(clients))
 				delete(clients, c)
 				close(c)
 			}
 		case c := <-s.add:
 			clients[c] = struct{}{}
+			slog.Info(fmt.Sprintf("clients: %d", len(clients)))
 		case c := <-s.remove:
 			if _, ok := clients[c]; ok {
 				delete(clients, c)
@@ -45,6 +48,7 @@ func (s *SSE) Run(ctx context.Context) {
 				case c <- data:
 				default:
 					if _, ok := clients[c]; ok {
+						slog.Info(fmt.Sprintf("clients: %d", len(clients)))
 						delete(clients, c)
 						close(c)
 					}
