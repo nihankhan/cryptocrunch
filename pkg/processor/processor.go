@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"context"
 	"time"
 )
 
@@ -11,35 +12,49 @@ type PriceData struct {
 
 type ProcessedData struct {
 	Currency  string
-	Price     float64
+	AvgPrice  float64
 	Timestamp time.Time
 }
 
-func ProcessData(priceCh <-chan PriceData, processedDataCh chan<- ProcessedData) {
+type priceAggregate struct {
+	total float64
+	count int
+}
 
-	accumulatedPrices := make(map[string]struct {
-		Total float64
-		Count int
-	})
-	for priceData := range priceCh {
-		accumulatedPrices[priceData.Currency] = struct {
-			Total float64
-			Count int
-		}{
-			Total: accumulatedPrices[priceData.Currency].Total + priceData.Price,
-			Count: accumulatedPrices[priceData.Currency].Count + 1,
+func ProcessData(
+	ctx context.Context,
+	priceCh <-chan PriceData,
+	processedCh chan<- ProcessedData,
+) {
+	defer close(processedCh)
+
+	aggregates := make(map[string]priceAggregate)
+
+	for {
+		select {
+
+		case <-ctx.Done():
+			return
+
+		case price, ok := <-priceCh:
+			if !ok {
+				return
+			}
+
+			agg := aggregates[price.Currency]
+			agg.total += price.Price
+			agg.count++
+			aggregates[price.Currency] = agg
+
+			select {
+			case <-ctx.Done():
+				return
+			case processedCh <- ProcessedData{
+				Currency:  price.Currency,
+				AvgPrice:  agg.total / float64(agg.count),
+				Timestamp: time.Now().UTC(),
+			}:
+			}
 		}
-
-		averagePrice := accumulatedPrices[priceData.Currency].Total / float64(accumulatedPrices[priceData.Currency].Count)
-
-		processedData := ProcessedData{
-			Currency:  priceData.Currency,
-			Price:     averagePrice,
-			Timestamp: time.Now(),
-		}
-
-		//log.Println(processedData)
-
-		processedDataCh <- processedData
 	}
 }

@@ -38,7 +38,10 @@ func main() {
 		close(processorPriceCh)
 	}()
 
-	go processor.ProcessData(processorPriceCh, processedDataCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go processor.ProcessData(ctx, processorPriceCh, processedDataCh)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWebSocket(w, r, processedDataCh)
