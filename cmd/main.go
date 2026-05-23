@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,12 +11,19 @@ import (
 	"github.com/nihankhan/CryptoCrunch/pkg/tracker"
 )
 
+type HTTPServer struct {
+	trackerPriceCh chan tracker.PriceData
+}
+
 func main() {
 	trackerPriceCh := make(chan tracker.PriceData)
 	processorPriceCh := make(chan processor.PriceData)
 	processedDataCh := make(chan processor.ProcessedData)
 
-	go tracker.TrackPrices(trackerPriceCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go tracker.TrackPrices(ctx, trackerPriceCh)
 
 	go func() {
 		for price := range trackerPriceCh {
@@ -49,7 +57,6 @@ func main() {
 
 	go func() {
 		err := server.ListenAndServe()
-
 		if err != nil {
 			log.Fatal(err)
 		}
