@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/gorilla/websocket"
 	"github.com/nihankhan/CryptoCrunch/pkg/processor"
+	"github.com/nihankhan/CryptoCrunch/pkg/sse"
 	"github.com/nihankhan/CryptoCrunch/pkg/tracker"
 )
-
-type HTTPServer struct {
-	trackerPriceCh chan tracker.PriceData
-}
 
 func main() {
 	trackerPriceCh := make(chan tracker.PriceData)
@@ -23,28 +22,34 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	sse := sse.NewSSE()
+	go sse.Run(ctx)
+
 	go tracker.TrackPrices(ctx, trackerPriceCh)
+	go processor.ProcessData(ctx, processorPriceCh, processedDataCh)
 
 	go func() {
 		for price := range trackerPriceCh {
-			convertedPrice := processor.PriceData{
+			select {
+			case processorPriceCh <- processor.PriceData{
 				Currency: price.Currency,
 				Price:    price.Price,
+			}:
+			case <-ctx.Done():
+				return
 			}
-
-			processorPriceCh <- convertedPrice
 		}
-
 		close(processorPriceCh)
 	}()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	go func() {
+		for data := range processedDataCh {
+			sse.Broadcast(ctx, data)
+		}
+	}()
 
-	go processor.ProcessData(ctx, processorPriceCh, processedDataCh)
-
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWebSocket(w, r, processedDataCh)
+	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		sse.Stream(w, r)
 	})
 
 	http.Handle("/", http.FileServer(http.Dir("./web")))
@@ -56,46 +61,17 @@ func main() {
 
 	fmt.Println("CryptoCrunch server is Running on 127.0.0.1:8080")
 
-	done := make(chan struct{})
-
 	go func() {
 		err := server.ListenAndServe()
-		if err != nil {
+		if err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
-
-		done <- struct{}{}
 	}()
 
-	<-done
-}
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGABRT, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+	cancel()
 
-func serveWebSocket(w http.ResponseWriter, r *http.Request, processedDataCh <-chan processor.ProcessedData) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-
-	if err != nil {
-		log.Println("WebSocket upgrade failed!")
-
-		return
-	}
-
-	defer conn.Close()
-
-	for processedData := range processedDataCh {
-
-		log.Println(processedData)
-
-		err := conn.WriteJSON(processedData)
-
-		if err != nil {
-			log.Println("Error sending message over WebSocket!")
-			return
-		}
-	}
+	server.Shutdown(ctx)
 }

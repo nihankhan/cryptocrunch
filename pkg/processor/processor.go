@@ -11,9 +11,9 @@ type PriceData struct {
 }
 
 type ProcessedData struct {
-	Currency  string
-	AvgPrice  float64
-	Timestamp time.Time
+	Currency  string    `json:"currency"`
+	AvgPrice  float64   `json:"price"`
+	Timestamp time.Time `json:"time"`
 }
 
 type priceAggregate struct {
@@ -32,15 +32,12 @@ func ProcessData(
 
 	for {
 		select {
-
 		case <-ctx.Done():
 			return
-
 		case price, ok := <-priceCh:
 			if !ok {
 				return
 			}
-
 			agg := aggregates[price.Currency]
 			agg.total += price.Price
 			agg.count++
